@@ -22,6 +22,8 @@
 #include <utils/KeyedVector.h>
 #include <utils/RefBase.h>
 
+#include <atomic>
+
 namespace android {
 
 struct AMessage;
@@ -73,9 +75,13 @@ private:
     KeyedVector<uint32_t, uint32_t> mMessages;
 
     Mutex mLock;
-    bool mDeliveringMessage;
-    uint32_t  mCurrentMessageWhat;
-    int64_t mCurrentMessageStartTimeUs;
+    // Delivery status is written on every message and read only by dumpsys.
+    // Keeping it lock free avoids a second mutex acquisition per message for
+    // handlers that are flooded (e.g. MTK's vtservice IMCB dispatcher).
+    // mLock is kept so the object layout does not change for prebuilt blobs.
+    std::atomic<bool> mDeliveringMessage;
+    std::atomic<uint32_t> mCurrentMessageWhat;
+    std::atomic<int64_t> mCurrentMessageStartTimeUs;
 
     void deliverMessage(const sp<AMessage> &msg);
 
