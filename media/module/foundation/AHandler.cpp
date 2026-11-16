@@ -41,18 +41,16 @@ void AHandler::deliverMessage(const sp<AMessage> &msg) {
 }
 
 void AHandler::setDeliveryStatus(bool delivering, uint32_t what, int64_t startUs) {
-    AutoMutex autoLock(mLock);
-    mDeliveringMessage = delivering;
-    mCurrentMessageWhat = what;
-    mCurrentMessageStartTimeUs = startUs;
+    mDeliveringMessage.store(delivering, std::memory_order_relaxed);
+    mCurrentMessageWhat.store(what, std::memory_order_relaxed);
+    mCurrentMessageStartTimeUs.store(startUs, std::memory_order_relaxed);
 }
 
 void AHandler::getDeliveryStatus(bool& delivering, uint32_t& what, int64_t& durationUs) {
-    AutoMutex autoLock(mLock);
-    delivering = mDeliveringMessage;
-    what = mCurrentMessageWhat;
-    durationUs = mCurrentMessageStartTimeUs == 0 ?
-            0 : ALooper::GetNowUs() - mCurrentMessageStartTimeUs;
+    delivering = mDeliveringMessage.load(std::memory_order_relaxed);
+    what = mCurrentMessageWhat.load(std::memory_order_relaxed);
+    const int64_t startUs = mCurrentMessageStartTimeUs.load(std::memory_order_relaxed);
+    durationUs = startUs == 0 ? 0 : ALooper::GetNowUs() - startUs;
 }
 
 }  // namespace android
