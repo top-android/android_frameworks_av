@@ -2236,6 +2236,25 @@ status_t CCodecConfig::getConfigUpdateFromSdkParams(
 
     if (configUpdate->size()) {
         mParamUpdater->updateParamsFromMessage(params, configUpdate);
+
+        // [cannon][A17] MTK 的 HIDL codec2 HAL 直接用 raw.max-size 做能力校验：
+        // surface 输出时应用会把整屏尺寸（1080x2340）填进来，超过 HAL 上限后
+        // configure 返回 EINVAL，且 MediaCodec 不会自动回落软解 -> 视频黑屏。
+        // 这里把这条提示夹到 1920 以内；实际输出尺寸仍由码流决定。
+        constexpr uint32_t kMaxPictureSize = 1920u;
+        for (const std::unique_ptr<C2Param> &param : *configUpdate) {
+            C2StreamMaxPictureSizeTuning::output *size =
+                    C2StreamMaxPictureSizeTuning::output::From(param.get());
+            if (size == nullptr) {
+                continue;
+            }
+            if (size->width > kMaxPictureSize) {
+                size->width = kMaxPictureSize;
+            }
+            if (size->height > kMaxPictureSize) {
+                size->height = kMaxPictureSize;
+            }
+        }
     }
     return OK;
 }
