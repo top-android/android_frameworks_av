@@ -79,6 +79,14 @@ cc_library_shared {
 
     shared_libs: ["libgui"],
     target: {
+        android: {
+            // [cannon][A17] MTK Q 的 libcodec2_hidl@1.0.so 引用旧名
+            // GraphicBufferSource::getHGraphicBufferProducer() const，
+            // A17 里该函数已改名为 ..._V1_0。加一个同地址别名兼容旧 blob。
+            ldflags: [
+                "-Wl,--defsym=_ZNK7android19GraphicBufferSource25getHGraphicBufferProducerEv=_ZNK7android19GraphicBufferSource30getHGraphicBufferProducer_V1_0Ev",
+            ],
+        },
         vendor: {
             exclude_shared_libs: [
                 "libgui",

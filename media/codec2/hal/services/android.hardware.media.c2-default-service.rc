@@ -3,5 +3,9 @@ service android-hardware-media-c2-hal /vendor/bin/hw/android.hardware.media.c2-d
     user mediacodec
     group camera mediadrm drmrpc
     ioprio rt 4
+    # [cannon][A17] MTK blob 要的 GraphicBufferSource 由 libc2_bq_stub 提供（SONAME
+    # 就是 libstagefright_bufferqueue_helper.so），setSmpte2094_50 由 shim 提供：
+    # A17 的 libcodec2_vndk 引用它，而进程里解析到的是 vendor 侧 A10 的 libui。
+    setenv LD_PRELOAD /vendor/lib64/libc2_bq_stub.so:/vendor/lib64/libshim_gbm_only.so
     task_profiles ProcessCapacityHigh
 

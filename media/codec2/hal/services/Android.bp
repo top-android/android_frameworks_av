@@ -59,6 +59,10 @@ cc_binary {
         "libavservices_minijail",
         "libbinder",
         "libbinder_ndk",
+        // [cannon][A17] 不再链接 A17 的 libstagefright_bufferqueue_helper：
+        // 它的 vendor 变体依赖 libEGL/libgui 等 /system 才有的库，装不进 /vendor。
+        // MTK blob 需要的 GraphicBufferSource 由 libc2_graphicbuffersource_stub
+        // （同名 stem）以空实现提供，见 device/xiaomi/cannon/libshims/Android.bp。
     ],
     required: ["android.hardware.media.c2-default-seccomp_policy"],
 
@@ -67,8 +71,14 @@ cc_binary {
     // (Remove the line below if the entry is already in the main manifest.)
     vintf_fragments: ["manifest_media_c2_default.xml"],
 
-    // Remove this line to enable this module.
-    enabled: false,
+    // [cannon][A17] 启用 AIDL IComponentStore/default 服务。
+//
+// A17 framework 只查询 AIDL codec2 store；MTK 的硬解（c2.mtk.avc/hevc/vdec）
+// 只提供 HIDL store（lshal 里 @1.2::IComponentStore/default pid 963）。
+// 没有这个服务时，MediaCodecList 里只有 c2.android.*（软解），硬解完全不可见，
+// 所以一直只能软解。这个服务通过 libcodec2_hidl_plugin 把 MTK 的 HIDL store
+// 桥接成 AIDL /default，硬解才会出现在 framework 的候选列表里。
+enabled: true,
 }
 
 // seccomp policy file.

@@ -1,15 +1,9 @@
 <manifest version="1.0" type="device">
-  <!-- HIDL fragment -->
-  <hal>
-      <name>android.hardware.media.c2</name>
-      <transport>hwbinder</transport>
-      <version>1.2</version>
-      <interface>
-          <name>IComponentStore</name>
-          <instance>default</instance>
-      </interface>
-  </hal>
-  <!-- AIDL fragment -->
+  <!-- [cannon][A17] 只保留 AIDL 声明。
+       原文件里还有一段 HIDL @1.2::IComponentStore/default，但 MTK 的 vendor
+       manifest（/vendor/etc/vintf/manifest.xml）已经声明了同一个实例，
+       重复声明会让 check_vintf_vendor 失败，init 卡在第一屏（实测 bootloop）。
+       AIDL 这条是 framework 发现 MTK 硬解的唯一入口，必须保留。 -->
   <hal format="aidl">
     <name>android.hardware.media.c2</name>
     <version>1</version>

@@ -2451,6 +2451,39 @@ void CCodec::start() {
         return;
     }
 
+    // [cannon][A17] MTK（A10）的 C2 组件在 start() 里要等 HAL 侧的输出块池，
+    // 而 A17 的 CCodec 是先 comp->start() 再 mChannel->start() 建池，两边互等 ->
+    // start 3 秒超时、硬解永远黑屏。对 HIDL 选择下、且没有输入 surface 的
+    // MTK 解码器，改成先建池再启动组件。
+    const bool mtkHidlDecoder =
+            ::android::base::GetProperty("media.c2.hal.selection", "hidl") == "hidl" &&
+            comp->getName().compare(0, 7, "c2.mtk.") == 0 &&
+            comp->getName().find(".decoder") != std::string::npos;
+
+    sp<AMessage> inputFormat;
+    sp<AMessage> outputFormat;
+    status_t err2 = OK;
+    bool buffersBoundToCodec = false;
+    bool hasInputSurface = false;
+    {
+        Mutexed<std::unique_ptr<Config>>::Locked configLocked(mConfig);
+        const std::unique_ptr<Config> &config = *configLocked;
+        inputFormat = config->mInputFormat;
+        // start triggers format dup
+        outputFormat = config->mOutputFormat = config->mOutputFormat->dup();
+        hasInputSurface = config->mInputSurface != nullptr;
+        buffersBoundToCodec = config->mBuffersBoundToCodec;
+    }
+
+    const bool poolsBeforeStart = mtkHidlDecoder && !hasInputSurface;
+    if (poolsBeforeStart) {
+        err2 = mChannel->start(inputFormat, outputFormat, buffersBoundToCodec);
+        if (err2 != OK) {
+            mCallback->onError(err2, ACTION_CODE_FATAL);
+            return;
+        }
+    }
+
     c2_status_t err = comp->start();
     if (err != C2_OK) {
         mCallback->onError(toStatusT(err, C2_OPERATION_Component_start),
@@ -2461,31 +2494,25 @@ void CCodec::start() {
     // clear the deadline after the component starts
     setDeadline(TimePoint::max(), 0ms, "none");
 
-    sp<AMessage> inputFormat;
-    sp<AMessage> outputFormat;
-    status_t err2 = OK;
-    bool buffersBoundToCodec = false;
-    {
+    if (hasInputSurface) {
         Mutexed<std::unique_ptr<Config>>::Locked configLocked(mConfig);
         const std::unique_ptr<Config> &config = *configLocked;
-        inputFormat = config->mInputFormat;
-        // start triggers format dup
-        outputFormat = config->mOutputFormat = config->mOutputFormat->dup();
         if (config->mInputSurface) {
             err2 = config->mInputSurface->start();
             config->mInputSurfaceDataspace = config->mInputSurface->getDataspace();
         }
-        buffersBoundToCodec = config->mBuffersBoundToCodec;
     }
     if (err2 != OK) {
         mCallback->onError(err2, ACTION_CODE_FATAL);
         return;
     }
 
-    err2 = mChannel->start(inputFormat, outputFormat, buffersBoundToCodec);
-    if (err2 != OK) {
-        mCallback->onError(err2, ACTION_CODE_FATAL);
-        return;
+    if (!poolsBeforeStart) {
+        err2 = mChannel->start(inputFormat, outputFormat, buffersBoundToCodec);
+        if (err2 != OK) {
+            mCallback->onError(err2, ACTION_CODE_FATAL);
+            return;
+        }
     }
 
     auto setRunning = [this] {

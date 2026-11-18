@@ -18,6 +18,8 @@
 #define LOG_TAG "android.hardware.media.c2-service"
 
 #include <android-base/logging.h>
+#include <dlfcn.h>
+#include <cstdlib>
 #include <minijail.h>
 
 #include <util/C2InterfaceHelper.h>
@@ -176,6 +178,37 @@ private:
     Interface mInterface;
 };
 
+
+// [cannon][A17] MTK 的 C2 实现只有 A10 的 HIDL 版（@1.2-mediatek），A17 framework
+// 只认 AIDL store。MTK 自己带了 libcodec2_mtk_c2store.so（C2ComponentStore 实现，
+// 直接管理 vdec/venc 插件），这里直接实例化它当 AIDL store 的后端，
+// 绕开 HIDL 那一层（A17 已无 HIDL codec2 客户端路径可复用）。
+// 没有头文件，用 blob 的构造函数符号 + 8KB 缓冲区（对象大小由 blob 自己决定），
+// 只构造不析构（进程常驻，blob 也没导出析构符号）。
+static std::shared_ptr<C2ComponentStore> createMtkComponentStore() {
+    void* handle = dlopen("/vendor/lib64/libcodec2_mtk_c2store.so", RTLD_NOW);
+    if (handle == nullptr) {
+        LOG(ERROR) << "cannot dlopen libcodec2_mtk_c2store.so: " << dlerror();
+        return nullptr;
+    }
+    using CtorFn = void (*)(void*);
+    CtorFn ctor = reinterpret_cast<CtorFn>(
+            dlsym(handle, "_ZN7android19C2MtkComponentStoreC1Ev"));
+    if (ctor == nullptr) {
+        LOG(ERROR) << "cannot dlsym C2MtkComponentStore ctor: " << dlerror();
+        return nullptr;
+    }
+    void* raw = std::calloc(1, 8192);
+    if (raw == nullptr) {
+        return nullptr;
+    }
+    ctor(raw);
+    LOG(INFO) << "MTK C2ComponentStore instantiated as AIDL default store backend";
+    return std::shared_ptr<C2ComponentStore>(
+            static_cast<C2ComponentStore*>(raw),
+            [](C2ComponentStore*) { /* 进程常驻，故意不析构 */ });
+}
+
 void runAidlService() {
     ABinderProcess_setThreadPoolMaxThreadCount(kThreadCount);
     ABinderProcess_startThreadPool();
@@ -188,8 +221,19 @@ void runAidlService() {
     // store = new utils::ComponentStore(
     //         /* implementation of C2ComponentStore */);
     LOG(DEBUG) << "Instantiating Codec2's IComponentStore service...";
-    store = ::ndk::SharedRefBase::make<utils::ComponentStore>(
-            std::make_shared<StoreImpl>());
+    std::shared_ptr<C2ComponentStore> backend = createMtkComponentStore();
+    if (backend != nullptr) {
+        auto traitsList = backend->listComponents();
+        LOG(INFO) << "MTK store lists " << traitsList.size() << " components";
+        for (const auto& t : traitsList) {
+            LOG(INFO) << "  - " << (t ? t->name : C2String("(null)"));
+        }
+    }
+    if (backend == nullptr) {
+        LOG(ERROR) << "falling back to empty store";
+        backend = std::make_shared<StoreImpl>();
+    }
+    store = ::ndk::SharedRefBase::make<utils::ComponentStore>(backend);
 
     if (store == nullptr) {
         LOG(ERROR) << "Cannot create Codec2's IComponentStore service.";
@@ -251,7 +295,9 @@ void runHidlService() {
 }
 
 int main(int /* argc */, char** /* argv */) {
-    const bool aidlEnabled = ::aidl::android::hardware::media::c2::utils::IsEnabled();
+    // [cannon][A17] A17 未生成 aconfig 的 IsEnabled()，且 codec2 已全面 AIDL 化，
+// 这里固定走 AIDL 分支（否则 AIDL /default store 不会注册，MTK 硬解不可见）。
+    const bool aidlEnabled = true;
     LOG(DEBUG) << "android.hardware.media.c2" << (aidlEnabled ? "-V1" : "@1.2")
                << "-service starting...";
 

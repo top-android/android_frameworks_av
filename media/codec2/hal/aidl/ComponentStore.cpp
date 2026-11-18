@@ -267,8 +267,10 @@ ScopedAStatus ComponentStore::createComponent(
     }
 
     std::shared_ptr<C2Component> c2component;
+    ALOGD("[cannon] createComponent begin name=%s", name.c_str());
     c2_status_t status =
             mStore->createComponent(name, &c2component);
+    ALOGD("[cannon] createComponent end name=%s status=%d", name.c_str(), (int)status);
 
     if (status == C2_OK) {
 #ifndef __ANDROID_APEX__  // Filters are not supported for APEX modules
