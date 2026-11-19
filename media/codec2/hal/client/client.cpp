@@ -2760,6 +2760,16 @@ std::vector<std::string> Codec2Client::CacheServiceNames() {
                         std::vector<std::string> *names = (std::vector<std::string> *)context;
                         names->emplace_back(name);
                     });
+            // [cannon] The MTK store is not part of the vendor image, so it can never be
+            // returned by forEachDeclaredInstance(). Add it when it is actually registered.
+            if (std::find(names.begin(), names.end(), "default") == names.end()) {
+                std::string instanceName =
+                        ::android::base::StringPrintf("%s/default", AidlBase::descriptor);
+                ::ndk::SpAIBinder probe(AServiceManager_checkService(instanceName.c_str()));
+                if (probe.get() != nullptr) {
+                    names.emplace_back("default");
+                }
+            }
         } else {
             LOG(FATAL) << "C2 AIDL cannot be selected on Android version older than 35";
         }
@@ -2880,11 +2890,18 @@ std::shared_ptr<Codec2Client> Codec2Client::_CreateFromIndex(size_t index) {
         if (__builtin_available(android __ANDROID_API_S__, *)) {
             std::string instanceName =
                 ::android::base::StringPrintf("%s/%s", AidlBase::descriptor, name.c_str());
-            if (AServiceManager_isDeclared(instanceName.c_str())) {
-                std::shared_ptr<AidlBase> baseStore = AidlBase::fromBinder(
-                        ::ndk::SpAIBinder(AServiceManager_waitForService(instanceName.c_str())));
-                CHECK(baseStore) << "Codec2 AIDL service \"" << name << "\""
-                                    " inaccessible for unknown reasons.";
+            // [cannon] A vendor codec2 store that is not part of the vendor image cannot be
+            // declared in the VINTF manifest (servicemanager parses it before /data is
+            // available). Probe it with checkService() instead of waitForService() so that a
+            // missing store never blocks the caller.
+            ::ndk::SpAIBinder storeBinder(AServiceManager_checkService(instanceName.c_str()));
+            if (storeBinder.get() != nullptr) {
+                std::shared_ptr<AidlBase> baseStore = AidlBase::fromBinder(std::move(storeBinder));
+                if (baseStore == nullptr) {
+                    LOG(ERROR) << "Codec2 AIDL service \"" << name << "\""
+                                  " has an unexpected interface.";
+                    return nullptr;
+                }
                 LOG(VERBOSE) << "Client to Codec2 AIDL service \"" << name << "\" created";
                 std::shared_ptr<c2_aidl::IConfigurable> configurable;
                 ::ndk::ScopedAStatus transStatus = baseStore->getConfigurable(&configurable);
@@ -2892,7 +2909,7 @@ std::shared_ptr<Codec2Client> Codec2Client::_CreateFromIndex(size_t index) {
                                             "does not have IConfigurable.";
                 return std::make_shared<Codec2Client>(baseStore, configurable, index);
             } else {
-                LOG(ERROR) << "Codec2 AIDL service \"" << name << "\" is not declared";
+                LOG(ERROR) << "Codec2 AIDL service \"" << name << "\" is not available";
             }
         } else {
             LOG(FATAL) << "C2 AIDL cannot be selected on Android version older than 35";

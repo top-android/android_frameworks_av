@@ -179,8 +179,9 @@ private:
 };
 
 
-// [cannon][A17] MTK 的 C2 实现只有 A10 的 HIDL 版（@1.2-mediatek），A17 framework
-// 只认 AIDL store。MTK 自己带了 libcodec2_mtk_c2store.so（C2ComponentStore 实现，
+// [cannon][A17] vendor 底包是 MIUI 13 / Android 12（V13.0.3.0.SJEMIXM，
+// SP1A.210812.016），MTK 的 C2 实现是 HIDL @1.2-mediatek，A17 framework 只认
+// AIDL store。MTK 自己带了 libcodec2_mtk_c2store.so（C2ComponentStore 实现，
 // 直接管理 vdec/venc 插件），这里直接实例化它当 AIDL store 的后端，
 // 绕开 HIDL 那一层（A17 已无 HIDL codec2 客户端路径可复用）。
 // 没有头文件，用 blob 的构造函数符号 + 8KB 缓冲区（对象大小由 blob 自己决定），
@@ -191,6 +192,23 @@ static std::shared_ptr<C2ComponentStore> createMtkComponentStore() {
         LOG(ERROR) << "cannot dlopen libcodec2_mtk_c2store.so: " << dlerror();
         return nullptr;
     }
+    // 优先用 blob 自己导出的工厂函数：它内部 new 出来的对象大小是对的。
+    // 之前手写 calloc(8192) + ctor 的做法在视频组件上会出问题
+    // （createInterface 直接返回 C2_TIMED_OUT，音频组件却正常）。
+    using GetStoreFn = std::shared_ptr<C2ComponentStore> (*)();
+    GetStoreFn getStore = reinterpret_cast<GetStoreFn>(
+            dlsym(handle, "_ZN7android26GetCodec2MtkComponentStoreEv"));
+    if (getStore != nullptr) {
+        std::shared_ptr<C2ComponentStore> store = getStore();
+        if (store != nullptr) {
+            LOG(INFO) << "MTK C2ComponentStore obtained via GetCodec2MtkComponentStore()";
+            return store;
+        }
+        LOG(ERROR) << "GetCodec2MtkComponentStore() returned nullptr";
+    } else {
+        LOG(ERROR) << "cannot dlsym GetCodec2MtkComponentStore: " << dlerror();
+    }
+
     using CtorFn = void (*)(void*);
     CtorFn ctor = reinterpret_cast<CtorFn>(
             dlsym(handle, "_ZN7android19C2MtkComponentStoreC1Ev"));
@@ -245,7 +263,8 @@ void runAidlService() {
         if (ex != EX_NONE) {
             LOG(ERROR) << "Cannot register Codec2's IComponentStore service"
                           " with instance name << \""
-                       << serviceName << "\".";
+                       << serviceName << "\", ex=" << static_cast<int>(ex)
+                       << " (" << strerror(-static_cast<int>(ex)) << ")";
         } else {
             LOG(DEBUG) << "Codec2's IComponentStore service registered. "
                           "Instance name: \"" << serviceName << "\".";
