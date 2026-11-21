@@ -40,6 +40,7 @@ package {
 
 cc_binary {
     name: "android.hardware.media.c2-default-service",
+    installable: false,
     vendor: true,
     relative_install_path: "hw",
 
@@ -64,7 +65,8 @@ cc_binary {
         // MTK blob 需要的 GraphicBufferSource 由 libc2_graphicbuffersource_stub
         // （同名 stem）以空实现提供，见 device/xiaomi/cannon/libshims/Android.bp。
     ],
-    required: ["android.hardware.media.c2-default-seccomp_policy"],
+    // [cannon] seccomp policy 由设备树 PRODUCT_COPY_FILES 提供（已针对 A17 放宽），
+    // 这里不再 required，避免与那条 COPY 规则抢同一路径。
 
     // The content in manifest_media_c2_default.xml can be included
     // directly in the main device manifest.xml file or via vintf_fragments.
